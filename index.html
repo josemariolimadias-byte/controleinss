@@ -26,18 +26,28 @@
             background: #334155;
         }
     </style>
-<script type="importmap">
+    <!-- Shim para evitar erro de process is not defined em navegadores -->
+    <script>
+      if (typeof window !== 'undefined' && typeof window.process === 'undefined') {
+        window.process = { env: { API_KEY: '' } };
+      }
+    </script>
+    <script type="importmap">
 {
   "imports": {
     "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react-dom": "https://esm.sh/react-dom@^19.2.3",
+    "react-dom/client": "https://esm.sh/react-dom@^19.2.3/client",
     "react/": "https://esm.sh/react@^19.2.3/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.36.0"
+    "@google/genai": "https://esm.sh/@google/genai@^1.36.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
   }
 }
 </script>
 </head>
 <body class="bg-slate-950 text-slate-100 antialiased">
     <div id="root"></div>
+    <!-- Carregamento explícito do ponto de entrada da aplicação -->
+    <script type="module" src="index.tsx"></script>
 </body>
 </html>
