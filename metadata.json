@@ -1,0 +1,5 @@
+{
+  "name": "Controle INSS",
+  "description": "Uma aplicação robusta de controle financeiro para gestão de benefícios, entradas e saídas com cálculos automáticos de saldo e insights inteligentes via IA.",
+  "requestFramePermissions": []
+}
