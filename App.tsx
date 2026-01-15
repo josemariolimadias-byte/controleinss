@@ -26,8 +26,10 @@ const App: React.FC = () => {
     const loadData = async () => {
       setIsLoading(true);
       
+      let dataLoaded = false;
+
       // Tentar Supabase primeiro
-      if (isSupabaseConfigured) {
+      if (isSupabaseConfigured && supabase) {
         try {
           const { data: trans, error } = await supabase
             .from('transactions')
@@ -36,20 +38,15 @@ const App: React.FC = () => {
           
           if (!error && trans) {
             setTransactions(trans as Transaction[]);
-            
-            // Buscar saldo inicial de uma tabela de config ou similar se existir
-            // Por simplicidade, mantemos o saldo inicial no localStorage ou default
-            const saved = localStorage.getItem(STORAGE_KEY);
-            if (saved) {
-              const { initial } = JSON.parse(saved);
-              setInitialBalance(initial || 0);
-            }
+            dataLoaded = true;
           }
         } catch (e) {
           console.error("Erro ao carregar do Supabase:", e);
         }
-      } else {
-        // Fallback para LocalStorage
+      }
+
+      // Se não carregou do Supabase ou não configurado, vai para LocalStorage
+      if (!dataLoaded) {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
           try {
@@ -67,7 +64,7 @@ const App: React.FC = () => {
     loadData();
   }, []);
 
-  // Salvar saldo inicial no localStorage (geralmente configs pequenas ficam no local ou em tabela Profile)
+  // Salvar saldo inicial no localStorage
   useEffect(() => {
     if (!isLoading) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ initial: initialBalance, trans: transactions }));
@@ -106,10 +103,10 @@ const App: React.FC = () => {
       type
     };
 
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && supabase) {
       const { error } = await supabase.from('transactions').insert([newTransaction]);
       if (error) {
-        alert("Erro ao salvar no banco de dados. Salvando localmente...");
+        console.warn("Erro ao salvar no banco de dados. Mantendo apenas local.");
       }
     }
 
@@ -119,7 +116,7 @@ const App: React.FC = () => {
   };
 
   const deleteTransaction = async (id: string) => {
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && supabase) {
       const { error } = await supabase.from('transactions').delete().eq('id', id);
       if (error) console.error("Erro ao deletar no Supabase");
     }
@@ -140,7 +137,7 @@ const App: React.FC = () => {
   const saveEdit = async () => {
     if (!editForm || !editingId) return;
 
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && supabase) {
       const { error } = await supabase
         .from('transactions')
         .update({
@@ -171,7 +168,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen pb-12 bg-slate-950 text-slate-100">
-      {/* Header */}
       <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3">
@@ -182,8 +178,8 @@ const App: React.FC = () => {
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight text-white">Controle INSS</h1>
-              {!isSupabaseConfigured && <span className="text-[9px] text-amber-500 font-bold uppercase tracking-widest">Modo Offline (Local)</span>}
-              {isSupabaseConfigured && <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-widest">Conectado ao Cloud</span>}
+              {!isSupabaseConfigured && <span className="text-[9px] text-amber-500 font-bold uppercase tracking-widest">Modo Local</span>}
+              {isSupabaseConfigured && <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-widest">Cloud Sync On</span>}
             </div>
           </div>
           
@@ -196,7 +192,6 @@ const App: React.FC = () => {
                 className="bg-transparent border-none rounded px-2 py-1 w-28 font-mono text-lg text-white focus:ring-0 outline-none"
                 value={initialBalance}
                 onChange={(e) => setInitialBalance(parseFloat(e.target.value) || 0)}
-                placeholder="0,00"
               />
             </div>
           </div>
@@ -204,240 +199,100 @@ const App: React.FC = () => {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 mt-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Left Column */}
         <div className="lg:col-span-1 space-y-6">
-          
-          {/* Summary Dashboard */}
           <div className="grid grid-cols-1 gap-4">
-            <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 hover:border-slate-700 transition-colors">
+            <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800">
               <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Entradas Totais</p>
               <h2 className="text-2xl font-bold text-emerald-400">R$ {summary.totalIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h2>
             </div>
-            <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 hover:border-slate-700 transition-colors">
+            <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800">
               <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Saídas Totais</p>
               <h2 className="text-2xl font-bold text-rose-400">R$ {summary.totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h2>
             </div>
             <div className="bg-indigo-600 p-6 rounded-2xl shadow-xl shadow-indigo-900/20 border border-indigo-500/50">
-              <p className="text-indigo-200 text-xs font-bold uppercase tracking-widest mb-1">Saldo Final Disponível</p>
+              <p className="text-indigo-200 text-xs font-bold uppercase tracking-widest mb-1">Saldo Final</p>
               <h2 className="text-3xl font-black text-white">R$ {summary.finalBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h2>
             </div>
           </div>
 
-          {/* New Transaction Form */}
-          <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-sm">
-            <h3 className="text-base font-bold mb-5 flex items-center gap-2 text-white">
-              <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full"></div>
-              Novo Lançamento
-            </h3>
+          <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800">
+            <h3 className="text-base font-bold mb-5 flex items-center gap-2 text-white">Novo Lançamento</h3>
             <form onSubmit={handleAddTransaction} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5 ml-1">Data</label>
-                <input 
-                  type="date" 
-                  required
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                />
+              <input type="date" required className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-white outline-none" value={date} onChange={(e) => setDate(e.target.value)} />
+              <input type="text" required placeholder="Descrição" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-white outline-none" value={description} onChange={(e) => setDescription(e.target.value)} />
+              <div className="grid grid-cols-2 gap-2">
+                <input type="number" step="0.01" required placeholder="Valor" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-white outline-none font-mono" value={amount} onChange={(e) => setAmount(e.target.value)} />
+                <select className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-white outline-none" value={type} onChange={(e) => setType(e.target.value as TransactionType)}>
+                  <option value="INCOME">Entrada (+)</option>
+                  <option value="EXPENSE">Saída (-)</option>
+                </select>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5 ml-1">Descrição</label>
-                <input 
-                  type="text" 
-                  required
-                  placeholder="Ex: Auxílio Doença"
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white placeholder-slate-600 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5 ml-1">Valor (R$)</label>
-                  <input 
-                    type="number" 
-                    step="0.01" 
-                    required
-                    placeholder="0,00"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white font-mono focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5 ml-1">Tipo</label>
-                  <select 
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all appearance-none"
-                    value={type}
-                    onChange={(e) => setType(e.target.value as TransactionType)}
-                  >
-                    <option value="INCOME">Entrada (+)</option>
-                    <option value="EXPENSE">Saída (-)</option>
-                  </select>
-                </div>
-              </div>
-              <button 
-                type="submit"
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-indigo-600/20 active:scale-[0.98] mt-2"
-              >
-                Confirmar Registro
-              </button>
+              <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all">Registrar</button>
             </form>
           </div>
 
-          {/* AI Insights Card */}
-          <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
-              <svg className="w-16 h-16 text-indigo-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-            </div>
-            <h4 className="text-sm font-bold mb-3 flex items-center gap-2 text-indigo-400 uppercase tracking-widest">
-              <span className="flex h-2 w-2 rounded-full bg-indigo-500 animate-pulse"></span>
-              IA Financeira
-            </h4>
-            <div className="min-h-[60px] flex items-center">
-              <p className="text-slate-300 text-sm leading-relaxed italic">
-                {aiAdvice || "Analise seus lançamentos para obter dicas personalizadas de economia."}
-              </p>
-            </div>
-            <button 
-              onClick={fetchAdvice}
-              disabled={loadingAdvice || transactions.length === 0}
-              className="mt-4 w-full py-2 px-4 rounded-lg bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition-all disabled:opacity-30 flex items-center justify-center gap-2"
-            >
-              {loadingAdvice ? (
-                <>
-                   <svg className="animate-spin h-3 w-3 text-indigo-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                   Analisando...
-                </>
-              ) : "Gerar Insights"}
+          <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800">
+            <h4 className="text-xs font-bold mb-3 text-indigo-400 uppercase tracking-widest">IA Financeira</h4>
+            <p className="text-slate-300 text-sm italic">{aiAdvice || "Analise para dicas."}</p>
+            <button onClick={fetchAdvice} disabled={loadingAdvice || transactions.length === 0} className="mt-4 w-full py-2 bg-slate-800 border border-slate-700 rounded text-xs font-bold text-slate-300 hover:bg-slate-700 disabled:opacity-30">
+              {loadingAdvice ? "Analisando..." : "Gerar Insights"}
             </button>
           </div>
         </div>
 
-        {/* Right Column: Statement Table */}
         <div className="lg:col-span-2 space-y-4">
           <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden min-h-[400px]">
-            <div className="px-6 py-5 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-              <h3 className="font-bold text-lg text-white">Extrato de Movimentações</h3>
-              <div className="flex gap-2">
-                <span className="px-2.5 py-1 bg-slate-800 rounded-lg text-[10px] font-bold text-slate-400 border border-slate-700 uppercase">
-                  {transactions.length} registros
-                </span>
-              </div>
+            <div className="px-6 py-5 border-b border-slate-800 bg-slate-900/50">
+              <h3 className="font-bold text-lg text-white">Extrato</h3>
             </div>
             
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead className="bg-slate-950/50 text-slate-500 text-[10px] uppercase font-bold tracking-widest">
                   <tr>
-                    <th className="px-6 py-4 border-b border-slate-800">Data</th>
-                    <th className="px-6 py-4 border-b border-slate-800">Descrição</th>
-                    <th className="px-6 py-4 border-b border-slate-800 text-right">Valor</th>
-                    <th className="px-6 py-4 border-b border-slate-800 text-right">Saldo Parcial</th>
-                    <th className="px-6 py-4 border-b border-slate-800 text-center w-32">Ações</th>
+                    <th className="px-6 py-4">Data</th>
+                    <th className="px-6 py-4">Descrição</th>
+                    <th className="px-6 py-4 text-right">Valor</th>
+                    <th className="px-6 py-4 text-right">Saldo</th>
+                    <th className="px-6 py-4 text-center">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {isLoading ? (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-20 text-center text-slate-500">
-                        Carregando registros...
-                      </td>
-                    </tr>
+                    <tr><td colSpan={5} className="px-6 py-20 text-center text-slate-500">Aguarde...</td></tr>
                   ) : processedTransactions.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-20 text-center text-slate-600 italic text-sm">
-                        <div className="flex flex-col items-center gap-3">
-                           <svg className="w-12 h-12 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-                           Nenhum lançamento registrado até o momento.
-                        </div>
-                      </td>
-                    </tr>
+                    <tr><td colSpan={5} className="px-6 py-20 text-center text-slate-600 italic">Sem registros.</td></tr>
                   ) : (
                     processedTransactions.map((t) => (
-                      <tr key={t.id} className={`group transition-all duration-200 ${editingId === t.id ? 'bg-indigo-950/30' : 'hover:bg-slate-800/30'}`}>
+                      <tr key={t.id} className={`group ${editingId === t.id ? 'bg-indigo-950/30' : 'hover:bg-slate-800/30'}`}>
                         {editingId === t.id ? (
                           <>
+                            <td className="px-6 py-3"><input type="date" className="bg-slate-800 text-white rounded px-2 py-1 text-xs w-full" value={editForm?.date} onChange={(e) => setEditForm(prev => prev ? { ...prev, date: e.target.value } : null)} /></td>
+                            <td className="px-6 py-3"><input type="text" className="bg-slate-800 text-white rounded px-2 py-1 text-xs w-full" value={editForm?.description} onChange={(e) => setEditForm(prev => prev ? { ...prev, description: e.target.value } : null)} /></td>
                             <td className="px-6 py-3">
-                              <input 
-                                type="date" 
-                                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs w-full text-white outline-none focus:ring-1 focus:ring-indigo-500"
-                                value={editForm?.date}
-                                onChange={(e) => setEditForm(prev => prev ? { ...prev, date: e.target.value } : null)}
-                              />
-                            </td>
-                            <td className="px-6 py-3">
-                              <input 
-                                type="text" 
-                                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs w-full text-white outline-none focus:ring-1 focus:ring-indigo-500"
-                                value={editForm?.description}
-                                onChange={(e) => setEditForm(prev => prev ? { ...prev, description: e.target.value } : null)}
-                              />
-                            </td>
-                            <td className="px-6 py-3">
-                              <div className="flex items-center gap-2">
-                                <select 
-                                  className="bg-slate-800 border border-slate-700 rounded px-1 py-1 text-[10px] text-white outline-none"
-                                  value={editForm?.type}
-                                  onChange={(e) => setEditForm(prev => prev ? { ...prev, type: e.target.value as TransactionType } : null)}
-                                >
-                                  <option value="INCOME">+</option>
-                                  <option value="EXPENSE">-</option>
-                                </select>
-                                <input 
-                                  type="number" 
-                                  className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs w-full text-white text-right outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                                  value={editForm?.amount}
-                                  onChange={(e) => setEditForm(prev => prev ? { ...prev, amount: parseFloat(e.target.value) || 0 } : null)}
-                                />
+                              <div className="flex gap-1 items-center">
+                                <select className="bg-slate-800 text-white rounded p-1 text-[10px]" value={editForm?.type} onChange={(e) => setEditForm(prev => prev ? { ...prev, type: e.target.value as TransactionType } : null)}><option value="INCOME">+</option><option value="EXPENSE">-</option></select>
+                                <input type="number" className="bg-slate-800 text-white rounded px-2 py-1 text-xs w-full text-right" value={editForm?.amount} onChange={(e) => setEditForm(prev => prev ? { ...prev, amount: parseFloat(e.target.value) || 0 } : null)} />
                               </div>
                             </td>
-                            <td className="px-6 py-3 text-right text-xs opacity-30 font-mono">
-                              (editando)
-                            </td>
+                            <td className="px-6 py-3 text-right text-[10px] text-slate-500 italic">(editando)</td>
                             <td className="px-6 py-3 text-center">
                               <div className="flex justify-center gap-2">
-                                <button onClick={saveEdit} className="p-1.5 text-emerald-500 hover:bg-emerald-500/10 rounded-lg transition-all" title="Salvar">
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
-                                </button>
-                                <button onClick={cancelEditing} className="p-1.5 text-slate-500 hover:bg-slate-500/10 rounded-lg transition-all" title="Cancelar">
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                                </button>
+                                <button onClick={saveEdit} className="text-emerald-500 p-1"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg></button>
+                                <button onClick={cancelEditing} className="text-slate-500 p-1"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
                               </div>
                             </td>
                           </>
                         ) : (
                           <>
-                            <td className="px-6 py-5 text-sm font-medium whitespace-nowrap text-slate-300">
-                              {new Date(t.date).toLocaleDateString('pt-BR')}
-                            </td>
-                            <td className="px-6 py-5 text-sm text-slate-400 group-hover:text-slate-100 transition-colors">
-                              {t.description}
-                            </td>
-                            <td className={`px-6 py-5 text-sm font-bold text-right whitespace-nowrap ${t.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              <span className="text-xs opacity-50 mr-1">{t.type === 'INCOME' ? '+' : '-'}</span>
-                              R$ {t.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="px-6 py-5 text-sm font-mono text-right font-bold text-slate-200 whitespace-nowrap">
-                              R$ {t.runningBalance?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </td>
+                            <td className="px-6 py-5 text-sm text-slate-300">{new Date(t.date).toLocaleDateString('pt-BR')}</td>
+                            <td className="px-6 py-5 text-sm text-slate-400 group-hover:text-slate-100">{t.description}</td>
+                            <td className={`px-6 py-5 text-sm font-bold text-right ${t.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>R$ {t.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                            <td className="px-6 py-5 text-sm font-mono text-right text-slate-200">R$ {t.runningBalance?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                             <td className="px-6 py-5 text-center">
-                              <div className="flex justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button 
-                                  onClick={() => startEditing(t)}
-                                  className="text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/10 p-2 rounded-lg transition-all"
-                                  title="Editar"
-                                >
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                                </button>
-                                <button 
-                                  onClick={() => deleteTransaction(t.id)}
-                                  className="text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 p-2 rounded-lg transition-all"
-                                  title="Remover Registro"
-                                >
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                </button>
+                              <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={() => startEditing(t)} className="text-slate-500 hover:text-indigo-400 p-1"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg></button>
+                                <button onClick={() => deleteTransaction(t.id)} className="text-slate-500 hover:text-rose-500 p-1"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
                               </div>
                             </td>
                           </>
@@ -449,28 +304,18 @@ const App: React.FC = () => {
               </table>
             </div>
             
-            <div className="bg-slate-950/40 px-6 py-6 border-t border-slate-800 flex justify-end items-center gap-6">
-               <div className="flex flex-col items-end">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Saldo Líquido</span>
-                <p className={`text-3xl font-black tracking-tight ${summary.finalBalance >= 0 ? 'text-white' : 'text-rose-500'}`}>
-                  <span className="text-base font-normal text-slate-500 mr-2">R$</span>
-                  {summary.finalBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            <div className="bg-slate-950/40 px-6 py-6 border-t border-slate-800 text-right">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Saldo Atual</span>
+                <p className={`text-3xl font-black ${summary.finalBalance >= 0 ? 'text-white' : 'text-rose-500'}`}>
+                  R$ {summary.finalBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </p>
-              </div>
             </div>
-          </div>
-          
-          <div className="flex justify-between items-center px-4">
-            <p className="text-[10px] text-slate-600 uppercase font-medium tracking-tighter italic">
-              {isSupabaseConfigured ? "* Dados sincronizados com Supabase Cloud." : "* Todos os dados são salvos localmente no seu navegador."}
-            </p>
           </div>
         </div>
       </main>
 
-      <footer className="max-w-6xl mx-auto px-4 mt-16 pb-8 text-center border-t border-slate-900 pt-8">
-        <p className="text-slate-600 text-[11px] font-bold uppercase tracking-[0.2em] mb-2">Controle Financeiro INSS v3.0</p>
-        <p className="text-slate-700 text-[10px]">&copy; {new Date().getFullYear()} - Desenvolvido com foco em acessibilidade e transparência.</p>
+      <footer className="max-w-6xl mx-auto px-4 mt-16 pb-8 text-center text-slate-700 text-[10px] uppercase font-bold tracking-widest">
+        &copy; {new Date().getFullYear()} Controle INSS - Gestão Financeira Inteligente
       </footer>
     </div>
   );
