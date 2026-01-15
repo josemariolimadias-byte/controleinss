@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Transaction, TransactionType, Summary } from './types';
 import { getFinancialAdvice } from './services/geminiService';
+import { supabase, isSupabaseConfigured } from './services/supabaseClient';
 
 const STORAGE_KEY = 'controle_inss_data';
 
@@ -14,23 +15,64 @@ const App: React.FC = () => {
   const [type, setType] = useState<TransactionType>('INCOME');
   const [aiAdvice, setAiAdvice] = useState<string>('');
   const [loadingAdvice, setLoadingAdvice] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
+  // Estados para edição
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Transaction | null>(null);
+
+  // Carregar dados iniciais
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const { initial, trans } = JSON.parse(saved);
-        setInitialBalance(initial || 0);
-        setTransactions(trans || []);
-      } catch (e) {
-        console.error("Failed to load data", e);
+    const loadData = async () => {
+      setIsLoading(true);
+      
+      // Tentar Supabase primeiro
+      if (isSupabaseConfigured) {
+        try {
+          const { data: trans, error } = await supabase
+            .from('transactions')
+            .select('*')
+            .order('date', { ascending: true });
+          
+          if (!error && trans) {
+            setTransactions(trans as Transaction[]);
+            
+            // Buscar saldo inicial de uma tabela de config ou similar se existir
+            // Por simplicidade, mantemos o saldo inicial no localStorage ou default
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+              const { initial } = JSON.parse(saved);
+              setInitialBalance(initial || 0);
+            }
+          }
+        } catch (e) {
+          console.error("Erro ao carregar do Supabase:", e);
+        }
+      } else {
+        // Fallback para LocalStorage
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          try {
+            const { initial, trans } = JSON.parse(saved);
+            setInitialBalance(initial || 0);
+            setTransactions(trans || []);
+          } catch (e) {
+            console.error("Falha ao carregar dados locais", e);
+          }
+        }
       }
-    }
+      setIsLoading(false);
+    };
+
+    loadData();
   }, []);
 
+  // Salvar saldo inicial no localStorage (geralmente configs pequenas ficam no local ou em tabela Profile)
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ initial: initialBalance, trans: transactions }));
-  }, [initialBalance, transactions]);
+    if (!isLoading) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ initial: initialBalance, trans: transactions }));
+    }
+  }, [initialBalance, transactions, isLoading]);
 
   const processedTransactions = useMemo(() => {
     const sorted = [...transactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -52,7 +94,7 @@ const App: React.FC = () => {
     };
   }, [transactions, initialBalance]);
 
-  const handleAddTransaction = (e: React.FormEvent) => {
+  const handleAddTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!description || !amount || parseFloat(amount) <= 0) return;
 
@@ -64,13 +106,60 @@ const App: React.FC = () => {
       type
     };
 
+    if (isSupabaseConfigured) {
+      const { error } = await supabase.from('transactions').insert([newTransaction]);
+      if (error) {
+        alert("Erro ao salvar no banco de dados. Salvando localmente...");
+      }
+    }
+
     setTransactions([...transactions, newTransaction]);
     setDescription('');
     setAmount('');
   };
 
-  const deleteTransaction = (id: string) => {
+  const deleteTransaction = async (id: string) => {
+    if (isSupabaseConfigured) {
+      const { error } = await supabase.from('transactions').delete().eq('id', id);
+      if (error) console.error("Erro ao deletar no Supabase");
+    }
     setTransactions(transactions.filter(t => t.id !== id));
+  };
+
+  // Funções de Edição
+  const startEditing = (transaction: Transaction) => {
+    setEditingId(transaction.id);
+    setEditForm({ ...transaction });
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditForm(null);
+  };
+
+  const saveEdit = async () => {
+    if (!editForm || !editingId) return;
+
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('transactions')
+        .update({
+          date: editForm.date,
+          description: editForm.description,
+          amount: editForm.amount,
+          type: editForm.type
+        })
+        .eq('id', editingId);
+      
+      if (error) {
+        alert("Erro ao atualizar no banco de dados.");
+        return;
+      }
+    }
+
+    setTransactions(transactions.map(t => t.id === editingId ? editForm : t));
+    setEditingId(null);
+    setEditForm(null);
   };
 
   const fetchAdvice = useCallback(async () => {
@@ -91,7 +180,11 @@ const App: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
               </svg>
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-white">Controle INSS</h1>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-white">Controle INSS</h1>
+              {!isSupabaseConfigured && <span className="text-[9px] text-amber-500 font-bold uppercase tracking-widest">Modo Offline (Local)</span>}
+              {isSupabaseConfigured && <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-widest">Conectado ao Cloud</span>}
+            </div>
           </div>
           
           <div className="flex items-center gap-3 bg-slate-800 p-1.5 rounded-xl border border-slate-700">
@@ -224,7 +317,7 @@ const App: React.FC = () => {
 
         {/* Right Column: Statement Table */}
         <div className="lg:col-span-2 space-y-4">
-          <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+          <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden min-h-[400px]">
             <div className="px-6 py-5 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
               <h3 className="font-bold text-lg text-white">Extrato de Movimentações</h3>
               <div className="flex gap-2">
@@ -242,11 +335,17 @@ const App: React.FC = () => {
                     <th className="px-6 py-4 border-b border-slate-800">Descrição</th>
                     <th className="px-6 py-4 border-b border-slate-800 text-right">Valor</th>
                     <th className="px-6 py-4 border-b border-slate-800 text-right">Saldo Parcial</th>
-                    <th className="px-6 py-4 border-b border-slate-800 text-center w-20"></th>
+                    <th className="px-6 py-4 border-b border-slate-800 text-center w-32">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {processedTransactions.length === 0 ? (
+                  {isLoading ? (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-20 text-center text-slate-500">
+                        Carregando registros...
+                      </td>
+                    </tr>
+                  ) : processedTransactions.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="px-6 py-20 text-center text-slate-600 italic text-sm">
                         <div className="flex flex-col items-center gap-3">
@@ -257,29 +356,92 @@ const App: React.FC = () => {
                     </tr>
                   ) : (
                     processedTransactions.map((t) => (
-                      <tr key={t.id} className="group hover:bg-slate-800/30 transition-all duration-200">
-                        <td className="px-6 py-5 text-sm font-medium whitespace-nowrap text-slate-300">
-                          {new Date(t.date).toLocaleDateString('pt-BR')}
-                        </td>
-                        <td className="px-6 py-5 text-sm text-slate-400 group-hover:text-slate-100 transition-colors">
-                          {t.description}
-                        </td>
-                        <td className={`px-6 py-5 text-sm font-bold text-right whitespace-nowrap ${t.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          <span className="text-xs opacity-50 mr-1">{t.type === 'INCOME' ? '+' : '-'}</span>
-                          R$ {t.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-6 py-5 text-sm font-mono text-right font-bold text-slate-200 whitespace-nowrap">
-                          R$ {t.runningBalance?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-6 py-5 text-center">
-                          <button 
-                            onClick={() => deleteTransaction(t.id)}
-                            className="text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 p-2 rounded-lg transition-all"
-                            title="Remover Registro"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                          </button>
-                        </td>
+                      <tr key={t.id} className={`group transition-all duration-200 ${editingId === t.id ? 'bg-indigo-950/30' : 'hover:bg-slate-800/30'}`}>
+                        {editingId === t.id ? (
+                          <>
+                            <td className="px-6 py-3">
+                              <input 
+                                type="date" 
+                                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs w-full text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                                value={editForm?.date}
+                                onChange={(e) => setEditForm(prev => prev ? { ...prev, date: e.target.value } : null)}
+                              />
+                            </td>
+                            <td className="px-6 py-3">
+                              <input 
+                                type="text" 
+                                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs w-full text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                                value={editForm?.description}
+                                onChange={(e) => setEditForm(prev => prev ? { ...prev, description: e.target.value } : null)}
+                              />
+                            </td>
+                            <td className="px-6 py-3">
+                              <div className="flex items-center gap-2">
+                                <select 
+                                  className="bg-slate-800 border border-slate-700 rounded px-1 py-1 text-[10px] text-white outline-none"
+                                  value={editForm?.type}
+                                  onChange={(e) => setEditForm(prev => prev ? { ...prev, type: e.target.value as TransactionType } : null)}
+                                >
+                                  <option value="INCOME">+</option>
+                                  <option value="EXPENSE">-</option>
+                                </select>
+                                <input 
+                                  type="number" 
+                                  className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs w-full text-white text-right outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                                  value={editForm?.amount}
+                                  onChange={(e) => setEditForm(prev => prev ? { ...prev, amount: parseFloat(e.target.value) || 0 } : null)}
+                                />
+                              </div>
+                            </td>
+                            <td className="px-6 py-3 text-right text-xs opacity-30 font-mono">
+                              (editando)
+                            </td>
+                            <td className="px-6 py-3 text-center">
+                              <div className="flex justify-center gap-2">
+                                <button onClick={saveEdit} className="p-1.5 text-emerald-500 hover:bg-emerald-500/10 rounded-lg transition-all" title="Salvar">
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                                </button>
+                                <button onClick={cancelEditing} className="p-1.5 text-slate-500 hover:bg-slate-500/10 rounded-lg transition-all" title="Cancelar">
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                              </div>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="px-6 py-5 text-sm font-medium whitespace-nowrap text-slate-300">
+                              {new Date(t.date).toLocaleDateString('pt-BR')}
+                            </td>
+                            <td className="px-6 py-5 text-sm text-slate-400 group-hover:text-slate-100 transition-colors">
+                              {t.description}
+                            </td>
+                            <td className={`px-6 py-5 text-sm font-bold text-right whitespace-nowrap ${t.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              <span className="text-xs opacity-50 mr-1">{t.type === 'INCOME' ? '+' : '-'}</span>
+                              R$ {t.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-6 py-5 text-sm font-mono text-right font-bold text-slate-200 whitespace-nowrap">
+                              R$ {t.runningBalance?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-6 py-5 text-center">
+                              <div className="flex justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                  onClick={() => startEditing(t)}
+                                  className="text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/10 p-2 rounded-lg transition-all"
+                                  title="Editar"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                </button>
+                                <button 
+                                  onClick={() => deleteTransaction(t.id)}
+                                  className="text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 p-2 rounded-lg transition-all"
+                                  title="Remover Registro"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                </button>
+                              </div>
+                            </td>
+                          </>
+                        )}
                       </tr>
                     ))
                   )}
@@ -300,14 +462,14 @@ const App: React.FC = () => {
           
           <div className="flex justify-between items-center px-4">
             <p className="text-[10px] text-slate-600 uppercase font-medium tracking-tighter italic">
-              * Todos os dados são salvos localmente no seu navegador.
+              {isSupabaseConfigured ? "* Dados sincronizados com Supabase Cloud." : "* Todos os dados são salvos localmente no seu navegador."}
             </p>
           </div>
         </div>
       </main>
 
       <footer className="max-w-6xl mx-auto px-4 mt-16 pb-8 text-center border-t border-slate-900 pt-8">
-        <p className="text-slate-600 text-[11px] font-bold uppercase tracking-[0.2em] mb-2">Controle Financeiro INSS v2.0</p>
+        <p className="text-slate-600 text-[11px] font-bold uppercase tracking-[0.2em] mb-2">Controle Financeiro INSS v3.0</p>
         <p className="text-slate-700 text-[10px]">&copy; {new Date().getFullYear()} - Desenvolvido com foco em acessibilidade e transparência.</p>
       </footer>
     </div>
